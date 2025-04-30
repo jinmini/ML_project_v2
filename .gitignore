@@ -1,0 +1,15 @@
+
+.specstory/
+
+.env
+
+.cursorindexi.md
+
+*.ipynb
+
+*.pyc
+
+*.md
+
+crime-service/app/domain/model/google_schema.py
+

@@ -1,0 +1,51 @@
+
+services:
+  gateway:
+    build:
+      context: ./gateway
+    container_name: gateway
+    ports:
+      - "9000:9000"
+    environment:
+      - PORT=9000
+      - TITANIC_SERVICE_URL=http://titanic:9001
+      - CRIME_SERVICE_URL=http://crime:9002
+    depends_on:
+      - titanic
+      - crime
+    networks:
+      - ai-network
+    restart: unless-stopped
+
+  titanic:
+    build:
+      context: ./titanic-service
+    container_name: titanic
+    ports:
+      - "9001:9001"
+    environment:
+      - PORT=9001
+    networks:
+      - ai-network
+    restart: unless-stopped
+    volumes:
+      - ./titanic-service/app/updated_data:/app/updated_data
+
+  crime:
+    build:
+      context: ./crime-service
+    container_name: crime
+    ports:
+      - "9002:9002"
+    environment:
+      - PORT=9002
+    networks:
+      - ai-network
+    restart: unless-stopped
+    volumes:
+      - ./crime-service/app/saved_data:/app/saved_data
+
+networks:
+  ai-network:
+    driver: bridge
+
