@@ -10,214 +10,184 @@ import traceback
 logger = logging.getLogger(__name__)
 
 class CrimeMapCreator:
-    def __init__(self, data_dir='app/updated_data', output_dir='app/saved_data'):
+    def __init__(self, data_dir='app/up_data', output_dir='app/map_data'):
         self.data_dir = data_dir
         self.output_dir = output_dir
         # 필요한 파일 경로 미리 정의
         self.police_norm_file = os.path.join(self.data_dir, 'police_norm_in_seoul.csv')
-        self.crime_file = os.path.join(self.data_dir, 'crime_in_seoul.csv')
         self.geo_json_file = os.path.join(self.data_dir, 'geo_simple.json')
-        self.police_pos_file = os.path.join(self.data_dir, 'police_pos.csv')
         self.output_map_file = os.path.join(self.output_dir, 'crime_map.html')
 
         # 디렉토리 생성 확인
         os.makedirs(self.data_dir, exist_ok=True)
         os.makedirs(self.output_dir, exist_ok=True)
-        logger.info(f"데이터 디렉토리 확인: {self.data_dir}")
-        logger.info(f"출력 디렉토리 확인: {self.output_dir}")
+        logger.info(f"데이터 읽기 디렉토리 확인: {self.data_dir}")
+        logger.info(f"지도 출력 디렉토리 확인: {self.output_dir}")
 
     def create_map(self) -> str:
         """범죄 지도를 생성하고 저장된 파일 경로를 반환합니다."""
         try:
             logger.info("범죄 지도 생성 시작...")
-            police_norm, crime, state_geo, police_pos = self._load_required_data()
-            folium_map = self._create_folium_map(police_norm, state_geo, police_pos)
+            police_norm, state_geo = self._load_required_data()
+            folium_map = self._create_folium_map(police_norm, state_geo)
             self._save_map_html(folium_map)
             logger.info(f"범죄 지도가 성공적으로 생성되었습니다: {self.output_map_file}")
             return self.output_map_file
         except FileNotFoundError as e:
             logger.error(f"필수 파일 로드 실패: {e}")
-            raise HTTPException(status_code=404, detail=f"필수 데이터 파일을 찾을 수 없습니다: {e.filename}")
+            # FileNotFoundError 객체에는 filename 속성이 없을 수 있음
+            raise HTTPException(status_code=404, detail=f"필수 데이터 파일을 찾을 수 없습니다: {e}")
         except KeyError as e:
              logger.error(f"데이터 처리 중 필수 컬럼 부재: {e}")
              raise HTTPException(status_code=400, detail=f"데이터 처리 중 필요한 컬럼({e})이 없습니다.")
+        except ValueError as e:
+             logger.error(f"데이터 처리 중 값 또는 형식 오류: {e}")
+             raise HTTPException(status_code=400, detail=f"데이터 처리 중 오류 발생: {e}")
         except Exception as e:
             logger.error(f"지도 생성 중 예상치 못한 오류 발생: {str(e)}")
             logger.error(traceback.format_exc())
-            # 예외 발생 시 구체적인 타입과 메시지 포함
             raise HTTPException(status_code=500, detail=f"지도 생성 중 서버 오류 발생: {type(e).__name__} - {str(e)}")
 
-
     def _load_required_data(self):
-        """지도 생성에 필요한 데이터를 로드합니다."""
+        """지도 생성에 필요한 데이터를 로드하고 기본적인 핸들링을 수행합니다."""
         logger.info("필수 데이터 로드 중...")
 
-        # police_norm 데이터 로드 (파일 없으면 기본 생성 로직은 제거하고 에러 발생)
+        # police_norm 데이터 로드
         if not os.path.exists(self.police_norm_file):
-            # logger.warning(f"경고: {self.police_norm_file} 파일이 없습니다. 기본 데이터를 생성합니다.")
-            # police_norm = self._create_default_police_norm()
-            # police_norm.to_csv(self.police_norm_file, index=False)
-            raise FileNotFoundError(f"{self.police_norm_file} 파일을 찾을 수 없습니다.")
-        police_norm = pd.read_csv(self.police_norm_file)
-        logger.info(f"{self.police_norm_file} 파일 로드 완료")
-        police_norm = self._preprocess_police_norm(police_norm) # 전처리 추가
+            raise FileNotFoundError(self.police_norm_file)
+        try:
+            police_norm = pd.read_csv(self.police_norm_file)
+            logger.info(f"{self.police_norm_file} 파일 로드 완료")
+            # '자치구' 컬럼 임시 처리 (Workaround) - 근본 원인 해결 후 제거 고려
+            if '자치구' not in police_norm.columns and 'Unnamed: 0' in police_norm.columns:
+                logger.warning(f"'{self.police_norm_file}' 파일에 '자치구' 컬럼이 없습니다. 'Unnamed: 0' 컬럼을 '자치구'로 사용합니다. (파일 재생성 권장)")
+                police_norm.rename(columns={'Unnamed: 0': '자치구'}, inplace=True)
+                if not pd.api.types.is_string_dtype(police_norm['자치구']):
+                     logger.error(f"'{self.police_norm_file}' 파일의 'Unnamed: 0' 컬럼이 자치구 이름이 아닙니다. 지도 생성 불가.")
+                     raise ValueError(f"'{self.police_norm_file}'에서 유효한 '자치구' 정보를 찾을 수 없습니다.")
+        except Exception as e:
+            logger.error(f"{self.police_norm_file} 파일 처리 중 오류: {e}")
+            raise ValueError(f"{self.police_norm_file} 파일을 처리하는 중 오류가 발생했습니다: {e}")
 
-        # crime 데이터 로드 (사용되지 않으면 로드 불필요, 현재는 미사용으로 보임)
-        # if not os.path.exists(self.crime_file):
-        #     raise FileNotFoundError(f"{self.crime_file} 파일을 찾을 수 없습니다.")
-        # crime = pd.read_csv(self.crime_file)
-        # logger.info(f"{self.crime_file} 파일 로드 완료")
-        crime = None # 임시로 None 처리 (지도 생성에 직접 사용되지 않음)
+        police_norm = self._preprocess_police_norm(police_norm)
 
         # GeoJSON 데이터 로드
         if not os.path.exists(self.geo_json_file):
-            # logger.warning(f"경고: {self.geo_json_file} 파일이 없습니다. 기본 지리 정보를 생성합니다.")
-            # state_geo = self._create_default_geojson()
-            # try:
-            #     with open(self.geo_json_file, 'w', encoding='utf-8') as f:
-            #         json.dump(state_geo, f, ensure_ascii=False)
-            #     logger.info(f"기본 지리 정보 파일이 생성되었습니다: {self.geo_json_file}")
-            # except Exception as e:
-            #     logger.error(f"지리 정보 파일 생성 실패: {str(e)}")
-            #     # 파일 생성 실패 시 에러 발생
-            #     raise IOError(f"기본 GeoJSON 파일 생성에 실패했습니다: {str(e)}")
-            raise FileNotFoundError(f"{self.geo_json_file} 파일을 찾을 수 없습니다.")
+            raise FileNotFoundError(self.geo_json_file)
         try:
-             with open(self.geo_json_file, 'r', encoding='utf-8') as f:
-                 state_geo = json.load(f)
-             logger.info(f"{self.geo_json_file} 파일 로드 완료")
+            with open(self.geo_json_file, 'r', encoding='utf-8') as f:
+                state_geo = json.load(f)
+            logger.info(f"{self.geo_json_file} 파일 로드 완료")
         except json.JSONDecodeError as e:
             logger.error(f"{self.geo_json_file} 파일 로드 중 JSON 디코딩 오류: {e}")
             raise ValueError(f"{self.geo_json_file} 파일의 형식이 올바르지 않습니다.")
+        except Exception as e:
+            logger.error(f"{self.geo_json_file} 파일 처리 중 오류: {e}")
+            raise ValueError(f"{self.geo_json_file} 파일을 처리하는 중 오류가 발생했습니다: {e}")
 
-
-        # 경찰서 위치 데이터 로드
-        if not os.path.exists(self.police_pos_file):
-            # logger.warning(f"경고: {self.police_pos_file} 파일이 없습니다. 기본 데이터를 생성합니다.")
-            # police_pos = self._create_default_police_pos()
-            # police_pos.to_csv(self.police_pos_file, index=False)
-             raise FileNotFoundError(f"{self.police_pos_file} 파일을 찾을 수 없습니다.")
-        police_pos = pd.read_csv(self.police_pos_file)
-        logger.info(f"{self.police_pos_file} 파일 로드 완료")
-        police_pos = self._preprocess_police_pos(police_pos) # 전처리 추가
-
-        return police_norm, crime, state_geo, police_pos
+        return police_norm, state_geo
 
     def _preprocess_police_norm(self, police_norm_df: pd.DataFrame) -> pd.DataFrame:
-        """police_norm 데이터를 전처리합니다 (자치구 컬럼 확인 등)."""
+        """police_norm 데이터를 전처리합니다 (컬럼 존재 여부 확인 등)."""
         logger.info("police_norm 데이터 전처리 중...")
-        # 자치구 컬럼명 통일 ('구별' -> '자치구')
-        if '구별' in police_norm_df.columns and '자치구' not in police_norm_df.columns:
-            police_norm_df['자치구'] = police_norm_df['구별']
-            logger.info("컬럼명 변경: '구별' -> '자치구'")
-
-        # 필수 컬럼 확인
+        # 필수 컬럼 존재 여부 최종 확인
         required_cols = ['자치구', '범죄'] # choropleth에 사용할 컬럼
         for col in required_cols:
             if col not in police_norm_df.columns:
-                 # '범죄' 컬럼이 없으면 다른 이름 확인 (e.g., '범죄율')
-                 if col == '범죄' and '범죄율' in police_norm_df.columns:
-                      police_norm_df['범죄'] = police_norm_df['범죄율']
-                      logger.info("컬럼명 변경: '범죄율' -> '범죄'")
-                 else:
-                      logger.error(f"police_norm 데이터에 필수 컬럼 '{col}'이 없습니다. 사용 가능한 컬럼: {police_norm_df.columns.tolist()}")
-                      raise KeyError(f"police_norm 데이터에 필수 컬럼 '{col}'이 없습니다.")
+                if col == '범죄' and '범죄율' in police_norm_df.columns:
+                     police_norm_df['범죄'] = police_norm_df['범죄율']
+                     logger.info("컬럼명 변경 시도: '범죄율' -> '범죄'")
+                else:
+                     logger.error(f"police_norm 데이터에 필수 컬럼 '{col}'이 최종적으로 없습니다. 사용 가능한 컬럼: {police_norm_df.columns.tolist()}")
+                     raise KeyError(f"police_norm 데이터에 필수 컬럼 '{col}'이 없습니다.")
 
         logger.info(f"police_norm 데이터 전처리 완료. 컬럼: {police_norm_df.columns.tolist()}")
         return police_norm_df
 
-    def _preprocess_police_pos(self, police_pos_df: pd.DataFrame) -> pd.DataFrame:
-        """police_pos 데이터를 전처리합니다 (검거율 계산 등)."""
-        logger.info("police_pos 데이터 전처리 중...")
-        # 필수 컬럼 확인
-        required_cols = ['lat', 'lng'] # 마커 표시에 사용할 컬럼
-        for col in required_cols:
-             if col not in police_pos_df.columns:
-                 logger.error(f"police_pos 데이터에 필수 컬럼 '{col}'이 없습니다. 사용 가능한 컬럼: {police_pos_df.columns.tolist()}")
-                 raise KeyError(f"police_pos 데이터에 필수 컬럼 '{col}'이 없습니다.")
-
-        # 검거율 컬럼 계산 ('검거' 컬럼이 없는 경우)
-        if '검거' not in police_pos_df.columns:
-            detection_cols = [col for col in police_pos_df.columns if '검거' in col and col.endswith(' 검거')]
-            if detection_cols:
-                logger.info(f"'검거' 컬럼이 없어 다음 컬럼들로 계산합니다: {detection_cols}")
-                # 각 검거 건수를 최대값으로 나누어 정규화 후 합산 (기존 로직과 동일하게)
-                # 0으로 나누는 경우 방지
-                max_values = police_pos_df[detection_cols].max()
-                # 최대값이 0인 컬럼은 1로 대체하여 0으로 나누는 것을 방지
-                max_values[max_values == 0] = 1
-                tmp = police_pos_df[detection_cols] / max_values
-                police_pos_df['검거'] = np.sum(tmp, axis=1)
-                logger.info("'검거' 컬럼 계산 완료.")
-            else:
-                logger.warning("경고: '검거' 컬럼 및 계산 가능한 'XX 검거' 컬럼이 없어 기본값 1을 사용합니다.")
-                police_pos_df['검거'] = 1 # 기본값 할당
-
-        logger.info(f"police_pos 데이터 전처리 완료. 컬럼: {police_pos_df.columns.tolist()}")
-        return police_pos_df
-
-
-    def _create_folium_map(self, police_norm, state_geo, police_pos):
-        """Folium을 사용하여 지도를 생성합니다."""
-        logger.info("Folium 지도 생성 중...")
+    def _create_folium_map(self, police_norm, state_geo):
+        """Folium을 사용하여 지도를 생성합니다 (Choropleth + 위험 지역 마커 포함)."""
+        logger.info("Folium 지도 생성 중... (Choropleth + Markers)")
         # 기본 지도 생성 (서울 중심)
         folium_map = folium.Map(location=[37.5502, 126.982], zoom_start=12, tiles='OpenStreetMap')
 
         # 1. Choropleth (구별 범죄율)
         try:
             logger.info("Choropleth 레이어 추가 중 (구별 범죄율)...")
+            if not pd.api.types.is_string_dtype(police_norm['자치구']):
+                 logger.warning("'자치구' 컬럼 타입이 문자열이 아닙니다. Choropleth 매칭 실패 가능성이 있습니다.")
+
             folium.Choropleth(
                 geo_data=state_geo,
-                data=police_norm, # 데이터프레임 직접 전달
-                columns=['자치구', '범죄'], # 사용할 컬럼 지정
-                key_on='feature.id', # GeoJSON의 id와 매칭될 컬럼
-                fill_color='PuRd',
+                data=police_norm,
+                columns=['자치구', '범죄'],
+                key_on='feature.id',
+                fill_color='YlOrRd',
                 fill_opacity=0.7,
-                line_opacity=0.2,
-                legend_name='범죄 발생률 (정규화)',
+                line_opacity=0.3,
+                legend_name='자치구별 범죄 지수 (높을수록 붉은색)',
                 reset=True,
+                name='자치구별 범죄 지수' # 레이어 컨트롤에 표시될 이름
             ).add_to(folium_map)
             logger.info("Choropleth 레이어 추가 완료.")
         except KeyError as e:
              logger.error(f"Choropleth 생성 중 오류: 필요한 컬럼({e})이 police_norm 데이터에 없습니다.")
-             raise # 오류를 다시 발생시켜 상위에서 처리하도록 함
+             raise
         except Exception as e:
             logger.error(f"Choropleth 생성 중 예상치 못한 오류: {str(e)}")
             logger.error(traceback.format_exc())
-            # Choropleth 실패해도 지도 자체는 반환될 수 있도록 경고만 로깅 (선택사항)
-            # raise # 또는 여기서도 에러 발생시켜 전체 실패 처리
-
-
-        # 2. CircleMarker (경찰서 위치 및 검거율)
-        try:
-            logger.info("CircleMarker 레이어 추가 중 (경찰서 위치 및 검거율)...")
-            for idx in police_pos.index:
-                 lat = police_pos.loc[idx, 'lat']
-                 lng = police_pos.loc[idx, 'lng']
-                 radius = police_pos.loc[idx, '검거'] * 10  # 검거율에 비례한 크기
-                 popup_text = f"검거율: {police_pos.loc[idx, '검거']:.2f}"
-
-                 folium.CircleMarker(
-                     location=[lat, lng],
-                     radius=max(radius, 3), # 최소 반경 보장
-                     fill=True,
-                     fill_color='#0a0a32', # 남색 계열
-                     fill_opacity=0.6,
-                     color=None, # 테두리 없음
-                     popup=popup_text
-                 ).add_to(folium_map)
-            logger.info("CircleMarker 레이어 추가 완료.")
-        except KeyError as e:
-             logger.error(f"CircleMarker 생성 중 오류: 필요한 컬럼({e})이 police_pos 데이터에 없습니다.")
-             raise
-        except Exception as e:
-            logger.error(f"CircleMarker 생성 중 예상치 못한 오류: {str(e)}")
-            logger.error(traceback.format_exc())
-            # 마커 생성 실패해도 지도 자체는 반환될 수 있도록 경고만 로깅 (선택사항)
             # raise
 
+        # 2. 위험 지역 마커 추가 (상위 3개 구)
+        try:
+             logger.info("위험 지역 마커 추가 중 (상위 3개 구)...")
+             # 범죄 지수 기준 상위 3개 구 선정
+             top3_districts = police_norm.nlargest(3, '범죄')
+             logger.info(f"상위 3개 위험 지역: {top3_districts['자치구'].tolist()}")
 
-        # 레이어 컨트롤 추가 (선택사항)
+             # 마커를 담을 FeatureGroup 생성
+             marker_group = folium.FeatureGroup(name='위험 지역 (범죄 상위 3)', show=True) # 기본적으로 보이도록 설정
+
+             # GeoJSON에서 상위 3개 구의 좌표 찾아서 마커 추가
+             for idx, row in top3_districts.iterrows():
+                 gu_name = row['자치구']
+                 crime_value = row['범죄']
+                 found_feature = False
+                 for feature in state_geo['features']:
+                     if feature['id'] == gu_name:
+                         # 폴리곤의 첫 번째 좌표를 대표 위치로 사용 (간단한 방법)
+                         # geometry 타입 확인 (Polygon 가정)
+                         coords = feature['geometry']['coordinates'][0]
+                         if coords and len(coords) > 0:
+                             # GeoJSON 좌표는 (경도, 위도) 순서일 수 있으므로 확인 필요
+                             # Folium은 (위도, 경도) 순서를 사용
+                             lng, lat = coords[0]
+                             marker_location = [lat, lng]
+
+                             # 마커 생성
+                             folium.Marker(
+                                 location=marker_location,
+                                 # 툴팁: 마우스 오버 시 표시
+                                 tooltip=f"{gu_name}: 범죄 지수 {crime_value:.2f}",
+                                 # 아이콘 설정
+                                 icon=folium.Icon(color='red', icon='exclamation-triangle', prefix='fa') # Font Awesome 아이콘 사용
+                             ).add_to(marker_group)
+                             found_feature = True
+                             break # 해당 구 찾았으므로 내부 루프 종료
+                 if not found_feature:
+                     logger.warning(f"상위 3개 구 '{gu_name}'에 해당하는 좌표를 GeoJSON에서 찾지 못했습니다.")
+
+             marker_group.add_to(folium_map) # 마커 그룹을 지도에 추가
+             logger.info("위험 지역 마커 추가 완료.")
+
+        except KeyError as e:
+            logger.error(f"위험 지역 마커 생성 중 오류: 필요한 컬럼({e})이 police_norm 데이터에 없습니다.")
+            # 마커 추가 실패해도 지도 생성은 계속 진행
+        except Exception as e:
+            logger.error(f"위험 지역 마커 생성 중 예상치 못한 오류: {str(e)}")
+            logger.error(traceback.format_exc())
+            # 마커 추가 실패해도 지도 생성은 계속 진행
+
+        # 레이어 컨트롤 추가 (Choropleth와 Marker 그룹 제어)
         folium.LayerControl().add_to(folium_map)
 
         logger.info("Folium 지도 생성 완료.")
@@ -233,19 +203,6 @@ class CrimeMapCreator:
             logger.error(f"지도 저장 중 오류 발생: {str(e)}")
             logger.error(traceback.format_exc())
             raise IOError(f"지도를 HTML 파일로 저장하는 데 실패했습니다: {str(e)}")
-
-    # --- 기본 데이터 생성 함수 (참고용, 실제 사용 시 파일 부재는 에러 처리) ---
-    # def _create_default_police_norm(self):
-    #     # ... (기존 코드 참고하여 기본 데이터프레임 생성)
-    #     pass
-    #
-    # def _create_default_geojson(self):
-    #     # ... (기존 코드 참고하여 기본 GeoJSON 생성)
-    #     pass
-    #
-    # def _create_default_police_pos(self):
-    #     # ... (기존 코드 참고하여 기본 데이터프레임 생성)
-    #     pass
 
 # 사용 예시 (테스트용)
 # if __name__ == '__main__':

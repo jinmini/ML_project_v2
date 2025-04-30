@@ -1,20 +1,14 @@
 # python -m app.main
-import time
+
 import os
-import json
-from typing import Any, Dict, Optional
-from fastapi import APIRouter, FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
-import os
 import logging
 import sys
-import time
 from dotenv import load_dotenv
 from app.api.crime_router import router as crime_router
 from app.domain.controller.crime_controller import CrimeController
-
 
 # ✅로깅 설정
 logging.basicConfig(

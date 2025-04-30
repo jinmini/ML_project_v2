@@ -3,16 +3,11 @@
 from app.domain.controller.titanic_controller import Controller
 import time
 import os
-import json
-from typing import Any, Dict, Optional
-from fastapi import APIRouter, FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
-import os
 import logging
 import sys
-import time
 from dotenv import load_dotenv
 from app.api.titanic_router import router as titanic_router
 

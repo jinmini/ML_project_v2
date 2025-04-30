@@ -13,3 +13,9 @@
 
 crime-service/app/domain/model/google_schema.py
 
+crime-service/run_update_police_test.py
+
+crime-service/.env
+
+crime-service/.env.local
+

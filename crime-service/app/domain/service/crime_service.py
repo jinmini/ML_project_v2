@@ -10,6 +10,8 @@ from app.domain.model.reader_schema import Datareader
 from app.domain.service.crime_map_create import CrimeMapCreator # 클래스 임포트
 from fastapi import HTTPException # HTTPException 임포트
 import logging # 로깅 추가
+import sys
+
 
 logger = logging.getLogger(__name__) # 로거 설정
 
@@ -124,7 +126,7 @@ class CrimeService:
                 station_lats.append(np.nan)
                 station_lngs.append(np.nan)
 
-        logger.debug(f"��💧주소 리스트: {station_addrs}")
+        logger.debug(f"💧주소 리스트: {station_addrs}")
         gu_names = []
         for addr in station_addrs:
             if addr in ['주소 없음', '오류 발생']:
@@ -206,7 +208,7 @@ class CrimeService:
                 return
 
             x = police[available_rate_columns].values
-            min_max_scalar = preprocessing.MinMaxScaler()
+            min_max_scalar = preprocessing.MinMaxScaler() 
             x_scaled = min_max_scalar.fit_transform(x.astype(float))
 
             police_norm_cols = [f'{col}_norm' for col in available_rate_columns]
@@ -317,4 +319,3 @@ class CrimeService:
             logger.error(f"지도 생성 중 예상치 못한 오류 발생: {str(e)}")
             logger.error(traceback.format_exc())
             raise HTTPException(status_code=500, detail=f"지도 생성 중 예상치 못한 서버 오류: {type(e).__name__}")
-

@@ -1,5 +1,4 @@
-from fastapi import APIRouter, Depends, Request, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, HTTPException
 import logging
 from app.domain.model.crime_schema import (
     CrimeRequest,
@@ -63,12 +62,7 @@ async def get_crime_map():
     logger.info("범죄 지도 생성 요청 받음")
     try:
         controller = CrimeController()
-        # draw_crime_map 호출 (내부에서 HTTPException 발생 가능)
         result = controller.draw_crime_map()
-
-        # 성공 시 (result는 {"status": "success", "file_path": ...} 형태)
-        # 이 부분은 draw_crime_map이 성공 시 항상 dict를 반환한다고 가정
-        # draw_crime_map에서 HTTPException 발생 시 아래 코드는 실행되지 않음
         file_path = result.get('file_path')
         if not file_path or not os.path.exists(file_path):
             logger.error(f"지도 생성은 성공했으나 결과 파일을 찾을 수 없음: {file_path}")
@@ -88,7 +82,6 @@ async def get_crime_map():
     except HTTPException as e:
         # Controller -> Service -> CrimeMapCreator 에서 발생시킨 HTTPException 처리
         logger.error(f"범죄 지도 생성 중 HTTP 오류 발생: {e.status_code} - {e.detail}")
-        # 클라이언트에게 해당 오류를 그대로 전달
         raise e # FastAPI가 적절한 JSON 응답 생성
 
     except Exception as e:
