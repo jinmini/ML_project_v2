@@ -19,3 +19,20 @@ crime-service/.env
 
 crime-service/.env.local
 
+# SpecStory explanation file
+.specstory/.what-is-this.md
+
+.html/
+
+*.html
+
+*.json
+
+*.csv
+
+*.png
+
+*.jpg
+
+*.jpeg
+

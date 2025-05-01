@@ -10,9 +10,11 @@ services:
       - PORT=9000
       - TITANIC_SERVICE_URL=http://titanic:9001
       - CRIME_SERVICE_URL=http://crime:9002
+      - NLP_SERVICE_URL=http://nlp:9003
     depends_on:
       - titanic
       - crime
+      - nlp
     networks:
       - ai-network
     restart: unless-stopped
@@ -44,6 +46,18 @@ services:
     restart: unless-stopped
     volumes:
       - ./crime-service/app/saved_data:/app/saved_data
+
+  nlp:
+    build:
+      context: ./nlp-service
+    container_name: nlp
+    ports:
+      - "9003:9003"
+    environment:
+      - PORT=9003
+    networks:
+      - ai-network
+    restart: unless-stopped
 
 networks:
   ai-network:
