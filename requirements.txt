@@ -1,3 +1,7 @@
+httpx 
+pandas
+scikit-learn
+numpy
 fastapi
 uvicorn
 asyncpg
@@ -9,6 +13,14 @@ passlib[bcrypt]==1.7.4
 shortuuid==1.0.13
 python-jose[cryptography]
 redis==5.2.1
-httpx 
+googlemaps
+folium
+pytest
+konlpy
+wordcloud
+matplotlib
+pillow
+JPype1
 python-multipart
-
+tensorflow
+opencv-python-headless

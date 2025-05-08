@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pytest
+pytest-asyncio
+httpx
+python-multipart
+tensorflow
+opencv-python-headless
+numpy
+python-dotenv

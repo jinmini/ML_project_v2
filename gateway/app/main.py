@@ -1,14 +1,17 @@
 import json
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request, UploadFile, File, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 import os
 import logging
 import sys
+from typing import Optional 
 from dotenv import load_dotenv
+from pydantic import BaseModel
 from app.domain.model.service_proxy_factory import ServiceProxyFactory
 from contextlib import asynccontextmanager
 from app.domain.model.service_type import ServiceType
+import httpx
 
 # 로깅 설정
 logging.basicConfig(
@@ -20,6 +23,10 @@ logger = logging.getLogger("gateway_api")
 
 # .env 파일 로드
 load_dotenv()
+
+# Swagger UI에서 tf/process 요청 본문 입력을 위한 Pydantic 모델
+class TFProcessPayload(BaseModel):
+    filename: str
 
 # ✅ 애플리케이션 시작 시 실행
 @asynccontextmanager
@@ -48,6 +55,10 @@ app.add_middleware(
 
 # ✅ 메인 라우터 생성
 gateway_router = APIRouter(prefix="/ai", tags=["AI API"])
+
+# ✅ 서비스 프록시 팩토리 의존성 주입 함수
+def get_proxy_factory(service: ServiceType) -> ServiceProxyFactory:
+    return ServiceProxyFactory(service_type=service)
 
 # ✅ 헬스 체크 엔드포인트 추가
 @gateway_router.get("/health", summary="테스트 엔드포인트")
@@ -93,9 +104,9 @@ def _handle_service_response(response) -> Response:
 async def proxy_get(
     service: ServiceType,
     path: str,
-    request: Request
+    request: Request,
+    factory: ServiceProxyFactory = Depends(get_proxy_factory)
 ):
-    factory = ServiceProxyFactory(service_type=service)
     response = await factory.request(
         method="GET",
         path=path,
@@ -103,31 +114,118 @@ async def proxy_get(
     )
     return _handle_service_response(response)
 
+# 파일 업로드 전용 엔드포인트
+@gateway_router.post("/{service}/upload", summary="파일 업로드")
+async def upload_file(
+    service: ServiceType,
+    request: Request,
+    file: UploadFile = File(...),
+    factory: ServiceProxyFactory = Depends(get_proxy_factory)
+):
+    logger.info(f"🌈Received file upload request for service: {service}")
+    
+    # 파일 데이터와 메타데이터를 multipart/form-data 형식으로 준비
+    form_data = {"file": (file.filename, await file.read(), file.content_type)}
+    
+    # 추상화된 엔드포인트 경로 사용
+    endpoint_path = f"{service.value}/upload"
+    
+    # 요청 전송 (파일 업로드를 위한 특별 처리)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            f"{factory.base_url}/{endpoint_path}",
+            files=form_data
+        )
+    
+    return _handle_service_response(response)
+
 # POST
 @gateway_router.post("/{service}/{path:path}", summary="POST 프록시")
 async def proxy_post(
     service: ServiceType,
     path: str,
-    request: Request
+    request: Request, # Request 객체는 헤더 및 쿼리 파라미터 접근을 위해 유지
+    factory: ServiceProxyFactory = Depends(get_proxy_factory),
+    # tf/process 경로에 대한 Swagger UI 요청 본문 활성화를 위한 파라미터
+    tf_process_payload: Optional[TFProcessPayload] = Body(None)
 ):
     logger.info(f"🌈Received POST request for service: {service}, path: {path}")
-    factory = ServiceProxyFactory(service_type=service)
-    body = await request.body()
-    logger.debug(f"Raw request body: {body[:200]}...")
 
-    response = await factory.request(
-        method="POST",
-        path=path,
-        headers=request.headers.raw,
-        body=body
-    )
-    return _handle_service_response(response)
+    try:
+        # 특수 처리: tf/process
+        if service == ServiceType.TF and path == "process":
+            filename = None
+            # Pydantic 모델로 파싱된 payload가 있으면 사용
+            if tf_process_payload:
+                filename = tf_process_payload.filename
+                logger.info(f"📦 tf/process: filename from Pydantic payload: {filename}")
+            
+            # Pydantic payload에서 filename을 얻지 못했다면 쿼리 파라미터에서 시도
+            if not filename:
+                filename = request.query_params.get("filename")
+                if filename:
+                    logger.info(f"📦 tf/process: filename from query parameters: {filename}")
+
+            if not filename:
+                logger.warning("❌ tf/process: filename 누락됨 (JSON body와 query param 모두 없음)")
+                return JSONResponse(
+                    status_code=422,
+                    content={"detail": "필수 파라미터 'filename'이 누락되었습니다."}
+                )
+
+            # 요청 본문 재구성
+            body_to_send = {"filename": filename}
+            json_body = json.dumps(body_to_send).encode("utf-8")
+
+            # 헤더 재구성 (원본 요청 헤더에서 Host 제외, Content-Type 및 Content-Length 재설정)
+            headers_dict = {
+                k.decode("utf-8").lower(): v.decode("utf-8") # 키를 소문자로 통일
+                for k, v in request.headers.raw
+                if k.decode("utf-8").lower() != "host" # Host 헤더 제외
+            }
+            headers_dict["content-type"] = "application/json" # 소문자로 설정
+            headers_dict["content-length"] = str(len(json_body))
+
+            logger.info(f"🔁 tf/process 요청 - 전달 데이터: {body_to_send}, 전달 헤더: {headers_dict}")
+            response = await factory.request(
+                method="POST",
+                path=path, # path는 "process"
+                headers=[(k.encode(), v.encode()) for k, v in headers_dict.items()],
+                body=json_body
+            )
+        else:
+            # 일반 POST 요청: 원본 요청 본문을 그대로 전달
+            # 주의: tf_process_payload = Body(None)이 다른 경로의 요청 본문 처리에 영향을 미칠 수 있음
+            # (예: tf_process_payload 파싱 시도 중 본문이 소비되어 아래 request.body()가 비어있을 수 있음)
+            # FastAPI/Starlette의 request.body()는 일반적으로 캐시되므로 괜찮을 수 있으나, 주의 필요.
+            body = await request.body()
+            logger.debug(f"📦 일반 POST 요청 body: {body[:200]}...")
+            logger.info(f"Forwarding to service. Headers: {request.headers.raw}")
+            response = await factory.request(
+                method="POST",
+                path=path,
+                headers=request.headers.raw, # 원본 헤더 사용
+                body=body
+            )
+
+        return _handle_service_response(response)
+
+    except Exception as e:
+        logger.error(f"❗ POST 프록시 요청 처리 중 예외 발생: {type(e).__name__} - {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"요청 처리 중 오류가 발생했습니다: {str(e)}"}
+        )
 
 # PUT
 @gateway_router.put("/{service}/{path:path}", summary="PUT 프록시")
-async def proxy_put(service: ServiceType, path: str, request: Request):
+async def proxy_put(
+    service: ServiceType,
+    path: str,
+    request: Request,
+    factory: ServiceProxyFactory = Depends(get_proxy_factory)
+):
     logger.info(f"🌈Received PUT request for service: {service}, path: {path}")
-    factory = ServiceProxyFactory(service_type=service)
     body = await request.body()
     logger.debug(f"Raw request body: {body[:200]}...")
     response = await factory.request(
@@ -140,9 +238,13 @@ async def proxy_put(service: ServiceType, path: str, request: Request):
 
 # DELETE
 @gateway_router.delete("/{service}/{path:path}", summary="DELETE 프록시")
-async def proxy_delete(service: ServiceType, path: str, request: Request):
+async def proxy_delete(
+    service: ServiceType,
+    path: str,
+    request: Request,
+    factory: ServiceProxyFactory = Depends(get_proxy_factory)
+):
     logger.info(f"🌈Received DELETE request for service: {service}, path: {path}")
-    factory = ServiceProxyFactory(service_type=service)
     body = await request.body()
     logger.debug(f"Raw request body: {body[:200]}...")
     response = await factory.request(
@@ -155,9 +257,13 @@ async def proxy_delete(service: ServiceType, path: str, request: Request):
 
 # PATCH
 @gateway_router.patch("/{service}/{path:path}", summary="PATCH 프록시")
-async def proxy_patch(service: ServiceType, path: str, request: Request):
+async def proxy_patch(
+    service: ServiceType,
+    path: str,
+    request: Request,
+    factory: ServiceProxyFactory = Depends(get_proxy_factory)
+):
     logger.info(f"🌈Received PATCH request for service: {service}, path: {path}")
-    factory = ServiceProxyFactory(service_type=service)
     body = await request.body()
     logger.debug(f"Raw request body: {body[:200]}...")
     response = await factory.request(
@@ -169,7 +275,7 @@ async def proxy_patch(service: ServiceType, path: str, request: Request):
     return _handle_service_response(response)
 
 # ✅ 라우터 등록
-app.include_router(gateway_router, tags=["Gateway API"])
+app.include_router(gateway_router)
 
 # ✅ 서버 실행
 if __name__ == "__main__":

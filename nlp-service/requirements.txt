@@ -21,4 +21,5 @@ wordcloud
 matplotlib
 pillow
 JPype1
+python-multipart
 

@@ -3,10 +3,17 @@ docker-compose up --build        # 전체 서비스 빌드 후 실행
 docker-compose up -d            # 전체 서비스 백그라운드로 실행
 docker-compose down             # 전체 서비스 중지 및 컨테이너 제거
 docker-compose down --volumes   # 전체 서비스 중지 및 컨테이너, 볼륨 제거
+docker compose up -d --force-recreate # 컨테이너 다시 시작
 
 # 개별 서비스 관련
 
+docker compose build tf - 특정 서비스만 다시 빌드
+
 # 로그 확인
+
+docker compose logs -f
+
+docker compose logs -f <서비스_이름1> <서비스_이름2>
 
 # 컨테이너 접속
 

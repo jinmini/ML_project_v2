@@ -1,4 +1,3 @@
-
 services:
   gateway:
     build:
@@ -11,10 +10,14 @@ services:
       - TITANIC_SERVICE_URL=http://titanic:9001
       - CRIME_SERVICE_URL=http://crime:9002
       - NLP_SERVICE_URL=http://nlp:9003
+      - TF_SERVICE_URL=http://tf:9004
+      - CHAT_SERVICE_URL=http://chat:9005
     depends_on:
       - titanic
       - crime
       - nlp
+      - tf
+      - chat
     networks:
       - ai-network
     restart: unless-stopped
@@ -58,6 +61,29 @@ services:
     networks:
       - ai-network
     restart: unless-stopped
+
+  tf:
+    build:
+      context: ./tf-service
+    container_name: tf
+    ports:
+      - "9004:9004"
+    environment:
+      - PORT=9004
+    volumes:
+      - C:\\Users\\bitcamp\\Documents\\2025\\25Project\\demo\\v2\\ai-server250424\\tf-service\\upload:/app/uploads
+      - C:\\Users\\bitcamp\\Documents\\2025\\25Project\\demo\\v2\\ai-server250424\\tf-service\\mosaic:/app/mosaic
+    networks:
+      - ai-network
+    restart: unless-stopped
+
+  chat:
+    build:
+      context: ./chat-service
+    container_name: chat
+    ports:
+      - "9005:9005"
+      
 
 networks:
   ai-network:
